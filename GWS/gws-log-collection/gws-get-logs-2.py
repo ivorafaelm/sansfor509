@@ -25,6 +25,8 @@ class Google(object):
         self.app_list = kwargs['apps']
         self.update = kwargs['update']
         self.overwrite = kwargs['overwrite']
+        self.start_time = kwargs['start_time']
+        self.end_time = kwargs['end_time']
 
         # Create output path if required
         if not os.path.exists(self.output_path):
@@ -96,7 +98,8 @@ class Google(object):
                 app, 
                 output_file=output_file, 
                 overwrite=self.overwrite, 
-                only_after_datetime=from_date
+                start_time=self.start_time,
+                end_time=self.end_time
             )
             logging.info(f"Saved {saved} of {found} entries for {app}")
             total_saved += saved
@@ -104,7 +107,7 @@ class Google(object):
 
         logging.info(f"TOTAL: Saved {total_saved} of {total_found} records.")
 
-    def _get_activity_logs(self, application_name, output_file, overwrite=False, only_after_datetime=None):
+    def _get_activity_logs(self, application_name, output_file, overwrite=False, start_time=None, end_time=None):
         """ Collect activitiy logs from the specified application """
         
         page_token = None
@@ -114,7 +117,7 @@ class Google(object):
             # Call the Admin SDK Reports API
             try:
                 results = self.service.activities().list(
-                    userKey='all', applicationName=application_name, pageToken=page_token).execute()
+                    userKey='all', applicationName=application_name, pageToken=page_token, startTime=start_time, endTime=end_time).execute()
             except TypeError as e:
                 logging.error(f"Error collecting logs for {application_name}: {e}")
                 return False, False
@@ -130,22 +133,13 @@ class Google(object):
                     for entry in activities[::-1]:
                         # TODO: See if we can speed this up to prevent looping through all activities
 
-                        # If we're only exporting new records, check the datetime of the record
-                        if only_after_datetime:
-                            entry_datetime = dateparser.parse(entry['id']['time'])
-                            if (entry_datetime <= only_after_datetime):
-                                continue  # Skip this record
-
                         # Output this record
                         json_formatted_str = json.dumps(entry)
                         output.write(f"{json_formatted_str}\n")
                         output_count += 1
 
-            if (entry_datetime <= only_after_datetime):
+            if not page_token:
                 break
-
-            ##if not page_token:
-                ##break
 
         return output_count, len(activities)
 
@@ -166,6 +160,8 @@ if __name__ == '__main__':
                         help="Comma separated list of applications whose logs will be downloaded. "
                          "Or 'all' to attempt to download all available logs")
     
+    parser.add_argument('--start-time', required=False, default=None, type=str, help="Start collecting from date (RFC3339 format)")
+    parser.add_argument('--end-time', required=False, default=None, type=str, help="Collect until date (RFC3339 format)")
     parser.add_argument('--from-date', required=False, default=None,
                         type=lambda s: dateparser.parse(s).replace(tzinfo=tz.gettz('UTC')),
                         help="Only capture log entries from the specified date [yyyy-mm-dd format]. This flag is ignored if --update is set and existing files are already present.")
