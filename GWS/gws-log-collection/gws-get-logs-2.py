@@ -108,6 +108,7 @@ class Google(object):
         """ Collect activitiy logs from the specified application """
         
         page_token = None
+        output_count = 0
 
         while True:
             # Call the Admin SDK Reports API
@@ -118,10 +119,10 @@ class Google(object):
                 logging.error(f"Error collecting logs for {application_name}: {e}")
                 return False, False
             
-            page_token = results.get('nextPageToken')
+            page_token = results.get('nextPageToken', "")
 
             activities = results.get('items', [])
-            output_count = 0
+            
             if activities:
                 with open(output_file, 'w' if overwrite else 'a') as output:
 
@@ -140,8 +141,11 @@ class Google(object):
                         output.write(f"{json_formatted_str}\n")
                         output_count += 1
 
-            if not page_token:
+            if (entry_datetime <= only_after_datetime):
                 break
+
+            ##if not page_token:
+                ##break
 
         return output_count, len(activities)
 
