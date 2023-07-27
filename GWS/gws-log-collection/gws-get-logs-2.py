@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 from __future__ import print_function
+import datetime
 import json
+from pathlib import Path
+from typing import Union
 import requests
 import os
 import argparse
@@ -8,6 +11,9 @@ import logging
 from googleapiclient.discovery import build
 from google.oauth2 import service_account
 from dateutil import parser as dateparser, tz
+
+
+DT = datetime.datetime
 
 
 class Google(object):
@@ -18,8 +24,8 @@ class Google(object):
     # These applications will be collected by default
     # DEFAULT_APPLICATIONS = ['login', 'drive', 'admin', 'user_accounts', 'chat', 'calendar', 'token']
 
-    DEFAULT_APPLICATIONS = ["chrome","admin","access_transparency","context_aware_access","gplus","data_studio","mobile","groups_enterprise","calendar","chat","gcp","drive","groups","keep","meet","jamboard","login","token","rules","saml","user_accounts"]
-
+    DEFAULT_APPLICATIONS = ["chrome", "admin", "access_transparency", "context_aware_access", "gplus", "data_studio", "mobile", "groups_enterprise",
+                            "calendar", "chat", "gcp", "drive", "groups", "keep", "meet", "jamboard", "login", "token", "rules", "saml", "user_accounts"]
 
     def __init__(self, **kwargs):
         self.SERVICE_ACCOUNT_FILE = kwargs['creds_path']
@@ -28,8 +34,6 @@ class Google(object):
         self.app_list = kwargs['apps']
         self.update = kwargs['update']
         self.overwrite = kwargs['overwrite']
-        self.start_time = kwargs['start_time']
-        self.end_time = kwargs['end_time']
 
         # Create output path if required
         if not os.path.exists(self.output_path):
@@ -44,7 +48,8 @@ class Google(object):
         Returns a list of valid applicationName parameters for the activities.list() API method 
         Note: this is the complete list of valid options, and some may not be valid on particular accounts.
         """
-        r = requests.get('https://admin.googleapis.com/$discovery/rest?version=reports_v1')
+        r = requests.get(
+            'https://admin.googleapis.com/$discovery/rest?version=reports_v1')
         return r.json()['resources']['activities']['methods']['list']['parameters']['applicationName']['enum']
 
     @staticmethod
@@ -52,7 +57,7 @@ class Google(object):
         """
         Opens an existing log file to find the datetime of the most recent record
         """
-        return_date = None        
+        return_date = None
         if os.path.exists(log_file_path):
             with open(log_file_path, 'r') as f:
                 for line in f.readlines():
@@ -68,15 +73,18 @@ class Google(object):
         """
         Establish connection to Google Workspace.
         """
-        SCOPES = ['https://www.googleapis.com/auth/admin.reports.audit.readonly', 'https://www.googleapis.com/auth/apps.alerts']
-        creds = service_account.Credentials.from_service_account_file(self.SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+        SCOPES = ['https://www.googleapis.com/auth/admin.reports.audit.readonly',
+                  'https://www.googleapis.com/auth/apps.alerts']
+        creds = service_account.Credentials.from_service_account_file(
+            self.SERVICE_ACCOUNT_FILE, scopes=SCOPES)
         delegated_credentials = creds.with_subject(self.delegated_creds)
 
-        service = build('admin', 'reports_v1', credentials=delegated_credentials)
+        service = build('admin', 'reports_v1',
+                        credentials=delegated_credentials)
 
         return service
-    
-    def get_logs(self, from_date=None):
+
+    def get_logs(self, from_date=None, to_date=None):
         """ 
         Collect all logs from specified applications
         """
@@ -86,23 +94,24 @@ class Google(object):
         for app in self.app_list:
 
             # Define output file name
-            output_file = f"{self.output_path}/{app}_logs.json"
+            folder = f"{self.output_path}/{from_date}_{to_date}"
+
+            if not Path(folder).exists():
+                logging.info(f"Creating log path: {folder}")
+                Path(folder).mkdir(parents=True, exist_ok=True)
+
+            output_file = f"{folder}/{app}_logs.json"
 
             # Get most recent log entry date (if required)
             if self.update:
                 from_date = self._check_recent_date(output_file) or from_date
 
-            # Collect logs for specified app
-            logging.info(f"Collecting logs for {app}...")
-            if from_date:
-                logging.debug(f"Only extracting records after {from_date}")
-
             saved, found = self._get_activity_logs(
-                app, 
-                output_file=output_file, 
-                overwrite=self.overwrite, 
-                start_time=self.start_time,
-                end_time=self.end_time
+                app,
+                output_file=output_file,
+                overwrite=self.overwrite,
+                start_time=from_date,
+                end_time=to_date
             )
             logging.info(f"Saved {saved} of {found} entries for {app}")
             total_saved += saved
@@ -112,7 +121,7 @@ class Google(object):
 
     def _get_activity_logs(self, application_name, output_file, overwrite=False, start_time=None, end_time=None):
         """ Collect activitiy logs from the specified application """
-        
+
         page_token = None
         output_count = 0
         total_records = 0
@@ -123,13 +132,14 @@ class Google(object):
                 results = self.service.activities().list(
                     userKey='all', applicationName=application_name, pageToken=page_token, startTime=start_time, endTime=end_time).execute()
             except TypeError as e:
-                logging.error(f"Error collecting logs for {application_name}: {e}")
+                logging.error(
+                    f"Error collecting logs for {application_name}: {e}")
                 return False, False
-            
+
             page_token = results.get('nextPageToken', "")
 
             activities = results.get('items', [])
-            
+
             if activities:
                 total_records += len(activities)
                 with open(output_file, 'w' if overwrite else 'a') as output:
@@ -149,34 +159,47 @@ class Google(object):
         return output_count, total_records
 
 
+def get_start_of_the_day(day: DT, fmt: str = '%Y-%m-%dT%H:%M:%SZ'):
+    return datetime.datetime.combine(day, datetime.time.min)
+
+
+def get_end_of_the_day(day: DT, fmt: str = '%Y-%m-%dT%H:%M:%SZ'):
+    return datetime.datetime.combine(day, datetime.time.max)
+
+
 if __name__ == '__main__':
 
-    parser = argparse.ArgumentParser(description='This script will fetch Google Workspace logs.')
+    parser = argparse.ArgumentParser(
+        description='This script will fetch Google Workspace logs.')
 
     # Configure with single config file
     parser.add_argument('--config', '-c', required=False, default='config.json',
                         help="Configuration file containing required arguments")
 
     # Or parse arguments separately
-    parser.add_argument('--creds-path', required=False, help=".json credential file for the service account.")
-    parser.add_argument('--delegated-creds', required=False, help="Principal name of the service account")
-    parser.add_argument('--output-path', '-o', required=False, help="Folder to save downloaded logs")
-    parser.add_argument('--apps', '-a', required=False, default=','.join(Google.DEFAULT_APPLICATIONS), 
+    parser.add_argument('--creds-path', required=False,
+                        help=".json credential file for the service account.")
+    parser.add_argument('--delegated-creds', required=False,
+                        help="Principal name of the service account")
+    parser.add_argument('--output-path', '-o', required=False,
+                        help="Folder to save downloaded logs")
+    parser.add_argument('--apps', '-a', required=False, default=','.join(Google.DEFAULT_APPLICATIONS),
                         help="Comma separated list of applications whose logs will be downloaded. "
-                         "Or 'all' to attempt to download all available logs")
-    
-    parser.add_argument('--start-time', required=False, default=None, type=str, help="Start collecting from date (RFC3339 format)")
-    parser.add_argument('--end-time', required=False, default=None, type=str, help="Collect until date (RFC3339 format)")
-    parser.add_argument('--from-date', required=False, default=None,
-                        type=lambda s: dateparser.parse(s).replace(tzinfo=tz.gettz('UTC')),
-                        help="Only capture log entries from the specified date [yyyy-mm-dd format]. This flag is ignored if --update is set and existing files are already present.")
+                        "Or 'all' to attempt to download all available logs")
+
+    parser.add_argument('--start-time', required=False, default=None,
+                        type=str, help="Start collecting from date (RFC3339 format)")
+    parser.add_argument('--end-time', required=False, default=None,
+                        type=str, help="Collect until date (RFC3339 format)")
+    parser.add_argument('--daily', required=False, action="store_true",
+                        help="Split requests by day.")
 
     # Update/overwrite behaviour
     parser.add_argument('--update', '-u', required=False, action="store_true",
                         help="Update existing log files (if present). This will only save new log records.")
     parser.add_argument('--overwrite', required=False, action="store_true",
                         help="Overwrite existing log files (if present), with all available (or requested) log records.")
-    
+
     # Logging/output levels
     parser.add_argument('--quiet', '-q', dest="log_level", action='store_const',
                         const=logging.ERROR, default=logging.INFO,
@@ -211,4 +234,30 @@ if __name__ == '__main__':
 
     # Connect to Google API
     google = Google(**vars(args))
-    google.get_logs(args.from_date)
+    if args.daily:
+        fmt = '%Y-%m-%dT%H:%M:%SZ'
+        start_time = datetime.datetime.strptime(args.start_time, fmt)
+        end_time = datetime.datetime.strptime(args.end_time, fmt)
+
+        while start_time < end_time:
+            end_of_day = get_end_of_the_day(start_time)
+
+            if end_of_day > end_time:
+                end_of_day = end_time
+
+
+            from_date = datetime.datetime.strftime(start_time, fmt)
+            to_date = datetime.datetime.strftime(end_of_day, fmt)
+
+            # Collect logs for specified app
+            logging.info(
+                f"Collecting logs from {from_date} -> {to_date}")
+
+            google.get_logs(
+                from_date=datetime.datetime.strftime(start_time, fmt),
+                to_date=datetime.datetime.strftime(end_of_day, fmt),
+            )
+            start_time = start_time + datetime.timedelta(days=1)
+            start_time = get_start_of_the_day(start_time)
+    else:
+        google.get_logs(args.from_date)
