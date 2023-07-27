@@ -16,7 +16,10 @@ class Google(object):
     """
 
     # These applications will be collected by default
-    DEFAULT_APPLICATIONS = ['login', 'drive', 'admin', 'user_accounts', 'chat', 'calendar', 'token']
+    # DEFAULT_APPLICATIONS = ['login', 'drive', 'admin', 'user_accounts', 'chat', 'calendar', 'token']
+
+    DEFAULT_APPLICATIONS = ["chrome","admin","access_transparency","context_aware_access","gplus","data_studio","mobile","groups_enterprise","calendar","chat","gcp","drive","groups","keep","meet","jamboard","login","token","rules","saml","user_accounts"]
+
 
     def __init__(self, **kwargs):
         self.SERVICE_ACCOUNT_FILE = kwargs['creds_path']
@@ -112,6 +115,7 @@ class Google(object):
         
         page_token = None
         output_count = 0
+        total_records = 0
 
         while True:
             # Call the Admin SDK Reports API
@@ -127,6 +131,7 @@ class Google(object):
             activities = results.get('items', [])
             
             if activities:
+                total_records += len(activities)
                 with open(output_file, 'w' if overwrite else 'a') as output:
 
                     # Loop through activities in reverse order (so latest events are at the end)
@@ -141,7 +146,7 @@ class Google(object):
             if not page_token:
                 break
 
-        return output_count, len(activities)
+        return output_count, total_records
 
 
 if __name__ == '__main__':
